@@ -1,3 +1,5 @@
+from msilib import sequence
+from multiprocessing import reduction
 import os
 import math
 import gzip
@@ -193,3 +195,91 @@ class LSTMRegressor(nn.Module):
         # LSTM層から出力される隠れ層を出力層にとおして予測結果を得る
         output = self.output_layer(h[:, -1])
         return output
+
+import torch
+from torch.utils.data import Dataset
+# LSTMを学習するためのデータセット
+class TimeBarDataset(Dataset):
+    def __init__(self, df, features, target, sequence_length):
+        self.df = df
+        self.features = features
+        self.target = target
+        self.sequence_length = sequence_length
+        self.index = df.index
+    
+    def __len__(self):
+        return len(self.index) - self.sequence_length + 1
+
+    def __getitem__(self, idx):
+        start = self.index[idx]
+        end = self.index[idx + self.sequence_length - 1]
+        # X.shape = (self.sequence_length(入力時系列の長さ) x input_size(特徴量の個数)) のテンソル
+        # y.shape = (output_size) のテンソル
+        return torch.from_numpy(self.df[start: end][self.features].values).float(), torch.from_numpy(self.df[end:end][self.target].values).float()
+
+import torch.optim as optim
+
+# Trainerの設定
+class Trainer:
+    def __init__(self, model, epochs, lr):
+        self.sequence_length = sequence_length
+        # model
+        self.model = model
+        self.best_model = self.model
+        # train parameter
+        self.lr = lr
+        self.epochs = epochs
+        self.device = torch.device("cpu")
+
+        # loss function
+        self.criterion = nn.MSELoss(reduction = "mean")
+        # optimizer
+        self.optimizer = optim.Adam(
+            self.model.parameters(), lr = lr, betas = (0.9, 0.999), amsgrad = True
+        )
+
+    def train(self, train_dataloader, val_dataloader):
+        "学習実施"
+        best_loss = float("inf")
+        for epoch in range(self.epochs):
+            print("---")
+            print("Epoch {}/{}".format(epoch + 1, self.epochs))
+            print("---")
+            train_loss = 0.0
+            test_loss = 0.0
+            self.model.train()
+            for (X, y) in train_dataloader:
+                out = self.model(X)
+                loss = self.criterion(out, y)
+                self.optimizer.zero_grad()
+                loss.backward()
+                # 学習安定化のために勾配クリップを設定
+                nn.utils.clip_grad_value_(self.model.parameters(), clip_value = 2.0)
+                self.optimizer.step()
+                train_loss += loss.item()
+
+            self.model.grad()
+            with torch.no_grad():
+                for batch in val_dataloader:
+                    out = self.model(X)
+                    loss = self.criterion(out, y)
+                    test_loss += loss.item()
+            
+            train_loss /= len(train_dataloader)
+            test_loss /= len(val_dataloader)
+            # test誤差が最小のものをbest_modelとする
+            if test_loss < best_loss:
+                best_loss = test_loss
+                self.best_model = self.model
+                print("save the best model")
+            print("loss: {:.3}, test_loss: {:.3}".format(train_loss, test_loss))
+    
+    def predict(self, val_dataset)
+    # 予測
+    res = []
+    self.best_model.eval()
+    with torch.no_grad():
+        for(X, y) in val_dataset:
+            out = self.best_model(X.unsqueeze(0))
+            res.append(out.item())
+    return res
